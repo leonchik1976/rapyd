@@ -1,0 +1,98 @@
+name: CI-CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform/layers
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Lint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.58.0
+    
+      - name: Run TFLint
+        run: tflint -f compact
+      
+      - name: Terraform Plan
+        run: terraform plan
+
+      - name: Terraform Apply (auto-approve)
+        run: terraform apply -auto-approve
+  
+  kubernetes:
+    name: K8s Manifests
+    runs-on: ubuntu-latest
+    needs: terraform
+    env:
+      EKS_CLUSTER_NAME_GATEWAY: eks-gateway
+      EKS_CLUSTER_NAME_BACKEND: eks-backend
+      AWS_REGION: us-east-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Create kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig --name $EKS_CLUSTER_NAME_GATEWAY --region $AWS_REGION --alias eks-gateway
+          aws eks update-kubeconfig --name $EKS_CLUSTER_NAME_BACKEND --region $AWS_REGION --alias eks-backend
+      
+      - name: Validate gateway manifests with kubeval
+        uses: instrumenta/kubeval-action@master
+        with:
+          files: ./manifests/gateway/
+    
+      - name: Validate backend manifests with kubeval
+        uses: instrumenta/kubeval-action@master
+        with:
+          files: ./manifests/backend
+      
+      - name: Dry-run Kubernetes manifests
+        run: |
+          kubectl --context eks-backend apply -f ./manifests/backend/ --dry-run=client
+          kubectl --context eks-gateway apply -f ./manifests/gateway/ --dry-run=client
+      
+      - name: Deploy to eks-backend
+        run: |
+          kubectl --context eks-backend apply -f ./manifests/backend/
+      
+      - name: Deploy to eks-gateway
+        run: |
+          kubectl --context eks-gateway apply -f ./manifests/gateway/
