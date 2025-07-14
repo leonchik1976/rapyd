@@ -89,6 +89,8 @@ terraform apply
 Implemented using GitHub Actions:
 * Terraform job: Format, lint, validate, and plan
 * Kubernetes job: Validate manifests via kubeval and dry-run kubectl apply
+* ⚠️ Public access to the EKS API is temporarily enabled to allow GitHub-hosted runners to interact with the clusters
+* ✅ In production, consider using **GitHub self-hosted runners** within VPC or VPN to securely access private EKS endpoints.
 
 <br><br>
 
